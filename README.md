@@ -51,8 +51,9 @@
 ### 📬 Связь со мной
 
 - 📧 Email: ichelnokova@gmail.com
-- 🔗 LinkedIn: https://www.linkedin.com/in/irina-tikhomirova-24b26069
+- 🔗 LinkedIn: [linkedin.com/in/irina-tikhomirova](https://www.linkedin.com/in/irina-tikhomirova-24b26069)
 - 📞 Telegram: @IrinaTikhi
+- 📄 [Скачать резюме (PDF)](resume.pdf)
 
 ---
 
