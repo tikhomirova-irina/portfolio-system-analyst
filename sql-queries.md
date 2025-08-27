@@ -63,13 +63,13 @@ SELECT
     st.name AS service_type,
     bs.status AS booking_status
 FROM booking b
-INNER JOIN "user" u ON b.client_user_id = u.id
+INNER JOIN "user" u ON b.client_user_id = u.user_id
 INNER JOIN session s ON b.session_id = s.session_id
-INNER JOIN "user" u2 ON s.therapist_user_id = u2.id
+INNER JOIN "user" u2 ON s.therapist_user_id = u2.user_id
 INNER JOIN service_type st ON s.service_type_id = st.service_type_id
 INNER JOIN booking_status bs ON b.status_id = bs.status_id
 WHERE bs.status IN ('booked', 'paid')
   AND s.start_time >= CURRENT_DATE
   AND s.start_time <= CURRENT_DATE + INTERVAL '3 months'
-ORDER BY s.start_time ASC, u2.last_name, u.last_name
+ORDER BY s.start_time, u2.last_name, u.last_name
 LIMIT 1000;
