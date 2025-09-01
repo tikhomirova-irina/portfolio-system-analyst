@@ -8,6 +8,7 @@
 - соединение таблиц (`JOIN`)
 - агрегацию (`COUNT`, `AVG`)
 - подзапросы и CTE
+- оконные функции
 
 Каждый запрос сопровождается **бизнес-задачей**, чтобы показать, как SQL помогает принимать решения в реальной системе.
 
@@ -119,31 +120,33 @@ GROUP BY u.user_id, u.last_name, u.first_name, u.middle_name
 HAVING COUNT(r.review_id) >= 3
 ORDER BY avg_rating DESC, review_count DESC;
 ```
-
-## 6. Рейтинг терапевтов по доходу от оплаченных сессий (последний месяц)
+## 6. Категоризация клиентов по активности (новый, активный, постоянный)
 
 **Бизнес-задача:**  
-SMM-менеджер и администратор хотят выявить самых востребованных терапевтов **по доходу и по количеству сессий**. Этот запрос использует оконную функцию `ROW_NUMBER()` для ранжирования и помогает:
-- формировать маркетинговые кампании ("ТОП-3 терапевта месяца"),
-- анализировать финансовую эффективность,
-- принимать решения по мотивации.
+Администратор хочет понять, какие клиенты являются новыми, активными или постоянными, чтобы:
+- мотивировать "спящих" клиентов (рассылка, скидка),
+- удержать постоянных,
+- адаптировать коммуникацию под сегмент.
+
+Этот запрос использует CASE для категоризации клиентов по количеству проведённых сессий, что демонстрирует умение переводить бизнес-правила в SQL.
 
 ```sql
 SELECT 
     u.last_name,
     u.first_name,
-    COUNT(b.booking_id) AS paid_sessions_count,
-    SUM(p.amount) AS total_revenue,
-    ROW_NUMBER() OVER (ORDER BY SUM(p.amount) DESC) AS rank_num
-FROM booking b
-INNER JOIN booking_status bs ON b.status_id = bs.status_id
-INNER JOIN session s ON b.session_id = s.session_id
-INNER JOIN payment p ON b.booking_id = p.booking_id
-INNER JOIN "user" u ON s.therapist_user_id = u.user_id
-WHERE bs.status = 'paid'
-  AND s.start_time >= CURRENT_DATE - INTERVAL '1 month'
-GROUP BY u.user_id, u.last_name, u.first_name
-ORDER BY total_revenue DESC;
+    u.middle_name,
+    COUNT(b.booking_id) AS total_sessions,
+    CASE 
+        WHEN COUNT(b.booking_id) = 1 THEN 'новый'
+        WHEN COUNT(b.booking_id) BETWEEN 2 AND 4 THEN 'активный'
+        WHEN COUNT(b.booking_id) >= 5 THEN 'постоянный'
+        ELSE 'нет активности'
+    END AS client_segment
+FROM "user" u
+LEFT JOIN booking b ON u.user_id = b.client_user_id
+WHERE u.role = 'client'
+GROUP BY u.user_id, u.last_name, u.first_name, u.middle_name
+ORDER BY total_sessions DESC;
 ```
 
 ## 7. Доля выручки терапевта в рамках его формы работы (проведённые сессии, последние 3 месяца)
@@ -177,73 +180,59 @@ GROUP BY u.user_id, u.last_name, u.first_name, st.service_type_id, st.name
 ORDER BY st.name, share_revenue_percent DESC;
 ```
 
-## 8. Рост количества отзывов у терапевта по месяцам
+## 8. Динамика количества отзывов по месяцам (за 6 полных месяцев)
 
 **Бизнес-задача:**  
-Администратор хочет выявить терапевтов, чья популярность растёт — кто получает больше отзывов по сравнению с предыдущим месяцем. Это помогает в маркетинге, мотивации и анализе качества сервиса.
-
-**Примечание:** Ниже приведены два эквивалентных подхода к решению задачи — с использованием CTE и с прямым применением оконной функции. Оба возвращают одинаковый результат, но различаются по стилю и читаемости.
-
----
-
-### 🔹 Вариант 1: с CTE 
+Администратор хочет проанализировать динамику популярности терапевтов за **последние 6 полных месяцев**, исключая текущий месяц, чтобы избежать искажений из-за неполных данных. Этот запрос помогает выявить специалистов, чья популярность растёт, и принять решения по маркетингу и мотивации.
 
 ```sql
-WITH monthly_reviews AS (
+WITH review_month AS (
     SELECT 
         r.therapist_user_id,
-        DATE_TRUNC('month', r.created_at) AS review_month,
+        DATE_TRUNC('month', r.created_at)::DATE AS review_month,
         COUNT(r.review_id) AS review_count
     FROM review r
-    WHERE r.created_at >= CURRENT_DATE - INTERVAL '6 months'
+    WHERE r.created_at >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '6 months')
+      AND r.created_at < DATE_TRUNC('month', CURRENT_DATE)
     GROUP BY r.therapist_user_id, DATE_TRUNC('month', r.created_at)
 ),
-review_with_growth AS (
+review_month_growth AS (
     SELECT 
-        mr.therapist_user_id,
-        mr.review_month,
-        mr.review_count,
-        LAG(mr.review_count) OVER (
-            PARTITION BY mr.therapist_user_id 
-            ORDER BY mr.review_month
-        ) AS prev_month_count
-    FROM monthly_reviews mr
+        rm.therapist_user_id,
+        rm.review_month,
+        rm.review_count,
+        LAG(rm.review_count) OVER (
+            PARTITION BY rm.therapist_user_id 
+            ORDER BY rm.review_month
+        ) AS review_count_prev
+    FROM review_month rm
 )
 SELECT 
     u.last_name,
     u.first_name,
-    rwg.review_month,
-    rwg.review_count,
-    rwg.prev_month_count,
-    (rwg.review_count - COALESCE(rwg.prev_month_count, 0)) AS growth
-FROM review_with_growth rwg
-INNER JOIN "user" u ON rwg.therapist_user_id = u.user_id
-WHERE rwg.review_count > COALESCE(rwg.prev_month_count, 0)
-ORDER BY rwg.review_month DESC, growth DESC;
+    u.middle_name,
+    rmg.review_month,
+    rmg.review_count,
+    rmg.review_count_prev,
+    rmg.review_count - COALESCE(rmg.review_count_prev, 0) AS review_growth
+FROM review_month_growth rmg
+INNER JOIN "user" u ON rmg.therapist_user_id = u.user_id
+ORDER BY 
+    review_growth DESC
+    rmg.review_month DESC;
 ```
+## 9. Терапевты, у которых нет ни одного отзыва
 
-### 🔹 Вариант 2: Только оконные функции
+**Бизнес-задача:**  
+Администратор хочет выявить терапевтов, которые работают, но не получают обратной связи. Это помогает инициировать процессы сбора фидбека.
 
 ```sql
 SELECT 
     u.last_name,
     u.first_name,
-    u.middle_name,
-    DATE_TRUNC('month', r.created_at) AS review_month,
-    COUNT(r.review_id) AS review_count,
-    LAG(COUNT(r.review_id)) OVER (
-        PARTITION BY u.user_id 
-        ORDER BY DATE_TRUNC('month', r.created_at)
-    ) AS prev_month_count,
-    COUNT(r.review_id) - 
-    LAG(COUNT(r.review_id)) OVER (
-        PARTITION BY u.user_id 
-        ORDER BY DATE_TRUNC('month', r.created_at)
-    ) AS growth
-FROM review r
-INNER JOIN "user" u ON r.therapist_user_id = u.user_id
-WHERE r.created_at >= CURRENT_DATE - INTERVAL '6 months'
-GROUP BY u.user_id, u.last_name, u.first_name, u.middle_name, DATE_TRUNC('month', r.created_at)
-HAVING COUNT(r.review_id) > 0
-ORDER BY u.last_name, review_month DESC;
-```
+    u.middle_name
+FROM "user" u
+INNER JOIN therapist t ON u.user_id = t.user_id
+LEFT JOIN review r ON t.user_id = r.therapist_user_id
+WHERE r.review_id IS NULL
+ORDER BY u.last_name, u.first_name;
